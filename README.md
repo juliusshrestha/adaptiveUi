@@ -84,5 +84,6 @@ When using the extension popup:
 - `docs/GETTING_STARTED.md`
 - `docs/EXTENSION.md`
 - `docs/CALIBRATION.md`
+- `docs/WEBSOCKET_API.md`
 
 

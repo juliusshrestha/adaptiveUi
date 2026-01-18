@@ -355,6 +355,17 @@ input[type="range"]::-webkit-slider-thumb:hover {
   border-radius: 6px;
 }
 
+/* Button group (e.g., Start/Stop) */
+.button-group {
+  display: flex;
+  gap: 8px;
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 /* Scrollbar */
 ::-webkit-scrollbar {
   width: 6px;

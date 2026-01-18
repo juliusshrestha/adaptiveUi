@@ -9,7 +9,7 @@ import asyncio
 import json
 import threading
 import time
-from typing import Optional, Set
+from typing import Optional, Set, Dict, Any, Literal
 from dataclasses import dataclass, asdict
 from queue import Queue, Empty
 
@@ -47,6 +47,20 @@ from src.utils.logger import setup_logger
 class AdaptationMessage:
     """Message structure for adaptation updates sent to clients."""
     type: str = "adaptation_update"
+    timestamp: float = 0.0
+    data: dict = None
+
+    def __post_init__(self):
+        if self.data is None:
+            self.data = {}
+
+    def to_json(self) -> str:
+        return json.dumps(asdict(self), cls=NumpyJSONEncoder)
+
+@dataclass
+class CognitiveLoadMessage:
+    """Message structure for cognitive load updates sent to clients."""
+    type: str = "cognitive_load_update"
     timestamp: float = 0.0
     data: dict = None
 
@@ -110,6 +124,11 @@ class AdaptiveUIServer:
         self.clients: Set[WebSocketServerProtocol] = set()
         self.server: Optional[websockets.WebSocketServer] = None
 
+        # Per-client stream preferences
+        # - "full": send adaptation_update (includes cognitive load + gaze + emotion + commands)
+        # - "cognitive_load": send only cognitive_load_update
+        self.client_stream_mode: Dict[WebSocketServerProtocol, Literal["full", "cognitive_load"]] = {}
+
         # Processing state
         self.adaptive_system: Optional[AdaptiveUISystem] = None
         self.processing_thread: Optional[threading.Thread] = None
@@ -126,6 +145,13 @@ class AdaptiveUIServer:
         # Latest frame cache (for center calibration commands)
         self._last_frame_lock = threading.Lock()
         self._last_frame: Optional[np.ndarray] = None
+
+        # Cache latest computed message payloads for request/response APIs
+        self._last_adaptation_message: Optional[AdaptationMessage] = None
+        self._last_cognitive_load_payload: Optional[dict] = None
+
+        # Graceful shutdown coordination (set inside start())
+        self._shutdown_event: Optional[asyncio.Event] = None
 
     def _init_adaptive_system(self):
         """Initialize the AdaptiveUISystem."""
@@ -189,6 +215,8 @@ class AdaptiveUIServer:
 
                 # Create message for clients
                 message = self._create_adaptation_message(result)
+                self._last_adaptation_message = message
+                self._last_cognitive_load_payload = message.data.get("cognitive_load", None)
 
                 # Put in queue (replace old if full)
                 try:
@@ -261,6 +289,15 @@ class AdaptiveUIServer:
             }
         )
 
+    def _create_cognitive_load_message(self) -> CognitiveLoadMessage:
+        """Create a cognitive load message from the latest cached payload."""
+        payload = self._last_cognitive_load_payload or {}
+        return CognitiveLoadMessage(
+            type="cognitive_load_update",
+            timestamp=time.time(),
+            data=payload,
+        )
+
     def _create_status_message(self) -> StatusMessage:
         """Create a status message with current server state."""
         return StatusMessage(
@@ -286,11 +323,16 @@ class AdaptiveUIServer:
         client_id = f"{websocket.remote_address[0]}:{websocket.remote_address[1]}"
         self.logger.info(f"Client connected: {client_id}")
         self.clients.add(websocket)
+        self.client_stream_mode[websocket] = "full"
 
         try:
             # Send initial status
             status = self._create_status_message()
             await websocket.send(status.to_json())
+
+            # If we have cached data, allow clients to render immediately
+            if self._last_cognitive_load_payload is not None:
+                await websocket.send(self._create_cognitive_load_message().to_json())
 
             # Handle incoming messages from client
             async for message in websocket:
@@ -302,6 +344,7 @@ class AdaptiveUIServer:
             self.logger.error(f"Error handling client {client_id}: {e}")
         finally:
             self.clients.discard(websocket)
+            self.client_stream_mode.pop(websocket, None)
             self.logger.info(f"Client removed: {client_id} (Total clients: {len(self.clients)})")
 
     async def _handle_client_message(self, websocket: WebSocketServerProtocol, message: str):
@@ -322,6 +365,31 @@ class AdaptiveUIServer:
             elif msg_type == 'config':
                 config = data.get('config', {})
                 await self._handle_config(websocket, config)
+            elif msg_type == 'subscribe':
+                # Client can request a reduced stream:
+                # { "type": "subscribe", "stream": "cognitive_load" }
+                stream = str(data.get("stream", "full")).strip().lower()
+                if stream not in ("full", "cognitive_load"):
+                    stream = "full"
+                self.client_stream_mode[websocket] = stream  # type: ignore[assignment]
+                await websocket.send(json.dumps({
+                    "type": "subscribe_response",
+                    "success": True,
+                    "stream": stream
+                }))
+            elif msg_type == 'get_cognitive_load':
+                # On-demand latest CLI snapshot
+                await websocket.send(self._create_cognitive_load_message().to_json())
+            elif msg_type == 'get_latest':
+                # On-demand latest full message (same structure as broadcast)
+                if self._last_adaptation_message is not None:
+                    await websocket.send(self._last_adaptation_message.to_json())
+                else:
+                    await websocket.send(json.dumps({
+                        "type": "adaptation_update",
+                        "timestamp": time.time(),
+                        "data": {}
+                    }))
             elif msg_type == 'ping':
                 await websocket.send(json.dumps({'type': 'pong', 'timestamp': time.time()}))
             else:
@@ -387,6 +455,18 @@ class AdaptiveUIServer:
         elif command == 'status':
             status = self._create_status_message()
             await websocket.send(status.to_json())
+        elif command in ('shutdown', 'stop_server'):
+            # Gracefully stop the server (useful for extension "Stop Server" button).
+            await websocket.send(json.dumps({
+                'type': 'command_response',
+                'command': command,
+                'success': True,
+                'message': 'Server shutting down'
+            }))
+
+            # Trigger shutdown after sending response.
+            if self._shutdown_event is not None:
+                self._shutdown_event.set()
         else:
             self.logger.warning(f"Unknown command: {command}")
 
@@ -443,13 +523,15 @@ class AdaptiveUIServer:
 
                 # Broadcast to all connected clients
                 if self.clients:
-                    message_json = message.to_json()
-
-                    # Create tasks for all clients
-                    tasks = [
-                        asyncio.create_task(self._safe_send(client, message_json))
-                        for client in self.clients.copy()
-                    ]
+                    # Create tasks for all clients, respecting per-client stream preferences
+                    tasks = []
+                    for client in self.clients.copy():
+                        mode = self.client_stream_mode.get(client, "full")
+                        if mode == "cognitive_load":
+                            payload = self._create_cognitive_load_message().to_json()
+                            tasks.append(asyncio.create_task(self._safe_send(client, payload)))
+                        else:
+                            tasks.append(asyncio.create_task(self._safe_send(client, message.to_json())))
 
                     if tasks:
                         await asyncio.gather(*tasks, return_exceptions=True)
@@ -480,6 +562,9 @@ class AdaptiveUIServer:
         """Start the WebSocket server."""
         self.logger.info(f"Starting Adaptive UI WebSocket Server on ws://{self.host}:{self.port}")
 
+        # Event used to exit the "run forever" loop gracefully
+        self._shutdown_event = asyncio.Event()
+
         # Initialize the adaptive system
         self._init_adaptive_system()
 
@@ -502,8 +587,8 @@ class AdaptiveUIServer:
         broadcast_task = asyncio.create_task(self._broadcast_loop())
 
         try:
-            # Keep server running
-            await asyncio.Future()  # Run forever
+            # Keep server running until shutdown requested
+            await self._shutdown_event.wait()
         except asyncio.CancelledError:
             pass
         finally:
@@ -513,6 +598,10 @@ class AdaptiveUIServer:
     async def stop(self):
         """Stop the WebSocket server and cleanup resources."""
         self.logger.info("Stopping server...")
+
+        # Unblock start() if stop() is called directly
+        if self._shutdown_event is not None:
+            self._shutdown_event.set()
 
         self.running = False
 

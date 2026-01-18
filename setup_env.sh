@@ -44,4 +44,3 @@ echo "  deactivate"
 echo ""
 echo "Optional: install full (research/dev) dependency set:"
 echo "  pip install -r requirements.txt"
-
