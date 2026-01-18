@@ -1,0 +1,11 @@
+name: adaptiveui
+channels:
+  - conda-forge
+dependencies:
+  # IMPORTANT:
+  # MediaPipe + OpenCV wheels are not consistently available for Python 3.13 yet.
+  # Use Python 3.10/3.11 for a reliable install.
+  - python=3.11
+  - pip
+  - pip:
+      - -r requirements/base.txt

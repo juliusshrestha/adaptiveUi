@@ -17,6 +17,9 @@ from dataclasses import dataclass
 from collections import deque
 from typing import Deque, Optional, Tuple
 import math
+import json
+from pathlib import Path
+from datetime import datetime
 
 import numpy as np
 import cv2
@@ -42,6 +45,9 @@ class MonitorGazeConfig:
     # Auto calibration for eye spheres (locks after N valid frames)
     auto_lock_eye_spheres: bool = True
     auto_lock_frames_required: int = 20
+
+    # Persist center calibration so it survives restarts
+    calibration_file: str = "config/monitor_plane_calibration.json"
 
 
 class MonitorPlaneGazeTracker:
@@ -79,6 +85,9 @@ class MonitorPlaneGazeTracker:
         self.calibration_offset_pitch = 0.0
         self.manual_offset_x_px = 0
         self.manual_offset_y_px = 0
+
+        # Load persisted calibration (if present)
+        self.load_calibration(silent=True)
 
         # Stabilize PCA eigenvector sign flips
         self._R_ref_nose: Optional[np.ndarray] = None
@@ -146,6 +155,54 @@ class MonitorPlaneGazeTracker:
         self._valid_frame_count = 0
         self._combined_gaze_directions.clear()
         self._screen_position_history.clear()
+
+        # Persist the cleared state so the next run doesn't restore old values
+        self.save_calibration(silent=True)
+
+    def load_calibration(self, silent: bool = False) -> bool:
+        """
+        Load monitor-plane calibration from `config.calibration_file`.
+
+        Expected JSON fields:
+        - calibration_offset_yaw
+        - calibration_offset_pitch
+        - manual_offset_x_px
+        - manual_offset_y_px
+        """
+        path = Path(self.config.calibration_file)
+        if not path.exists():
+            return False
+
+        try:
+            data = json.loads(path.read_text())
+            self.calibration_offset_yaw = float(data.get("calibration_offset_yaw", self.calibration_offset_yaw))
+            self.calibration_offset_pitch = float(data.get("calibration_offset_pitch", self.calibration_offset_pitch))
+            self.manual_offset_x_px = int(data.get("manual_offset_x_px", self.manual_offset_x_px))
+            self.manual_offset_y_px = int(data.get("manual_offset_y_px", self.manual_offset_y_px))
+            return True
+        except Exception:
+            if silent:
+                return False
+            raise
+
+    def save_calibration(self, silent: bool = False) -> bool:
+        """Persist monitor-plane calibration to `config.calibration_file`."""
+        path = Path(self.config.calibration_file)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "timestamp": datetime.now().isoformat(),
+                "calibration_offset_yaw": float(self.calibration_offset_yaw),
+                "calibration_offset_pitch": float(self.calibration_offset_pitch),
+                "manual_offset_x_px": int(self.manual_offset_x_px),
+                "manual_offset_y_px": int(self.manual_offset_y_px),
+            }
+            path.write_text(json.dumps(payload, indent=2))
+            return True
+        except Exception:
+            if silent:
+                return False
+            raise
 
     def _compute_scale(self, points_3d: np.ndarray) -> float:
         """Robust-ish scale proxy from nose landmark cloud."""
@@ -310,6 +367,7 @@ class MonitorPlaneGazeTracker:
         # Offsets required to center
         self.calibration_offset_yaw = 0.0 - raw_yaw
         self.calibration_offset_pitch = 0.0 - raw_pitch
+        self.save_calibration(silent=True)
         return True
 
     def get_gaze(self, frame: np.ndarray, _internal_no_center_calibration: bool = False) -> Optional[Tuple[float, float]]:

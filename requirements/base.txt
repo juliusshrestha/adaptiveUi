@@ -1,0 +1,19 @@
+# Minimal runtime requirements (production).
+#
+# Includes the backend WebSocket server + gaze tracking + CLI computation.
+# Optional ML emotion models (transformers/torch/tensorflow) are intentionally excluded.
+#
+# Install:
+#   pip install -r requirements/base.txt
+
+numpy>=1.24.0
+opencv-python>=4.8.0
+mediapipe>=0.10.0
+
+pyyaml>=6.0
+websockets>=12.0
+python-dateutil>=2.8.0
+
+# Mouse tracking for CLI (optional at runtime; code degrades gracefully if missing)
+pynput>=1.7.6
+

@@ -52,6 +52,11 @@ class GazeCalibrator:
         self._loaded = False
         self.load_calibration(silent=True)
 
+    @property
+    def is_loaded(self) -> bool:
+        """True if a calibration file was successfully loaded."""
+        return bool(self._loaded)
+
     def load_calibration(self, path: Optional[str] = None, silent: bool = False) -> bool:
         """Load calibration parameters from JSON file."""
         p = Path(path or self.calibration_path)

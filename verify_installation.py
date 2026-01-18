@@ -22,39 +22,53 @@ def main():
     """Check all required dependencies"""
     print("Checking Adaptive UI System Dependencies...")
     print("=" * 50)
-    
-    checks = [
+
+    print(f"Python: {sys.version.split()[0]}")
+    print()
+
+    required = [
         ("numpy", "NumPy"),
         ("cv2", "OpenCV"),
-        ("scipy", "SciPy"),
-        ("pandas", "Pandas"),
-        ("sklearn", "scikit-learn"),
-        ("statsmodels", "statsmodels"),
-        ("matplotlib", "Matplotlib"),
-        ("seaborn", "Seaborn"),
-        ("yaml", "PyYAML"),
-        ("dateutil", "python-dateutil"),
-        ("pytest", "pytest"),
         ("mediapipe", "MediaPipe"),
-        ("tensorflow", "TensorFlow"),
+        ("yaml", "PyYAML"),
+        ("websockets", "websockets"),
+        ("dateutil", "python-dateutil"),
     ]
-    
+
+    optional = [
+        ("pynput", "pynput (mouse tracking)"),
+        ("torch", "PyTorch (ViT emotion model)"),
+        ("transformers", "Transformers (ViT emotion model)"),
+        ("tensorflow", "TensorFlow (optional)"),
+        ("fer", "FER (optional emotion model)"),
+    ]
+
     results = []
-    for module, name in checks:
+    print("Required:")
+    for module, name in required:
         results.append(check_import(module, name))
-    
+
+    print()
+    print("Optional:")
+    for module, name in optional:
+        check_import(module, name)
+
     print("=" * 50)
-    
+
     if all(results):
-        print("\n✓ All dependencies installed successfully!")
-        print("\nYou can now run the system with:")
-        print("  python src/main.py")
+        print("\n✓ Required dependencies installed successfully!")
+        print("\nRun desktop app:")
+        print("  python main.py")
+        print("\nRun WebSocket server (for extension):")
+        print("  python -m src.server.run_server")
         return 0
-    else:
-        print("\n✗ Some dependencies are missing.")
-        print("Please install them with:")
-        print("  pip install -r requirements.txt")
-        return 1
+
+    print("\n✗ Missing required dependencies.")
+    print("Install minimal runtime with:")
+    print("  pip install -r requirements/base.txt")
+    print("\nOr install the full set with:")
+    print("  pip install -r requirements.txt")
+    return 1
 
 if __name__ == "__main__":
     sys.exit(main())

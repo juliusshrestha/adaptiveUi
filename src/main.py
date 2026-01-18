@@ -12,6 +12,9 @@ from datetime import datetime
 from collections import deque
 import time
 
+# Project root (…/adaptiveUi). This makes calibration paths stable even if you run from another cwd.
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
 # Ensure we can import from src regardless of where script is run from
 if __name__ == "__main__":
     project_root = Path(__file__).parent.parent
@@ -93,6 +96,7 @@ class AdaptiveUISystem:
                 monitor_height=int(mp_cfg.get('monitor_height', 1080)),
                 auto_lock_eye_spheres=bool(mp_cfg.get('auto_lock_eye_spheres', True)),
                 auto_lock_frames_required=int(mp_cfg.get('auto_lock_frames_required', 20)),
+                calibration_file=str(PROJECT_ROOT / "config" / "monitor_plane_calibration.json"),
             )
             self.gaze_tracker = MonitorPlaneGazeTracker(config=monitor_cfg)
             self.logger.info("Using Monitor Plane Gaze Tracker (ported monitor tracking)")
@@ -148,8 +152,9 @@ class AdaptiveUISystem:
         self.last_frame_time = 0
 
         # Gaze calibration
-        self.calibrator = GazeCalibrator()
-        self.use_calibration = False
+        self.calibrator = GazeCalibrator(calibration_path=str(PROJECT_ROOT / "config" / "gaze_calibration.json"))
+        # Auto-enable saved calibration for direct mode
+        self.use_calibration = bool(self.calibrator.is_loaded) and self.gaze_mode == "direct"
 
     def set_gaze_mode(self, mode: str, monitor_plane_config: Optional[dict] = None) -> bool:
         """
@@ -175,6 +180,7 @@ class AdaptiveUISystem:
                     monitor_height=int(cfg.get('monitor_height', 1080)),
                     auto_lock_eye_spheres=bool(cfg.get('auto_lock_eye_spheres', True)),
                     auto_lock_frames_required=int(cfg.get('auto_lock_frames_required', 20)),
+                    calibration_file=str(PROJECT_ROOT / "config" / "monitor_plane_calibration.json"),
                 )
                 self.gaze_tracker = MonitorPlaneGazeTracker(config=monitor_cfg)
                 self.gaze_mode = 'monitor_plane'
@@ -182,7 +188,8 @@ class AdaptiveUISystem:
             else:
                 self.gaze_tracker = DirectGazeTracker()
                 self.gaze_mode = 'direct'
-                self.use_calibration = False
+                # If a saved 9-point calibration exists, use it automatically
+                self.use_calibration = bool(self.calibrator.is_loaded)
 
             # Initialize the newly selected tracker if system is already running
             if hasattr(self.gaze_tracker, 'setup_mediapipe'):
