@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Adaptive UI</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <!-- Header -->
+    <header class="header">
+      <div class="header-content">
+        <h1 class="title">Adaptive UI</h1>
+        <span class="status-dot" id="statusDot"></span>
+      </div>
+      <p class="status-text" id="statusText">Connecting...</p>
+    </header>
+
+    <!-- Cognitive Load Section -->
+    <section class="section">
+      <h2 class="section-title">Cognitive Load</h2>
+      <div class="load-gauge">
+        <div class="load-bar">
+          <div class="load-fill" id="loadFill"></div>
+        </div>
+        <div class="load-labels">
+          <span>Low</span>
+          <span>Medium</span>
+          <span>High</span>
+        </div>
+      </div>
+      <div class="load-details">
+        <span class="load-value" id="loadValue">--</span>
+        <span class="load-level" id="loadLevel">Unknown</span>
+      </div>
+    </section>
+
+    <!-- Metrics Section -->
+    <section class="section metrics-section">
+      <h2 class="section-title">Metrics</h2>
+      <div class="metrics-grid">
+        <div class="metric">
+          <span class="metric-label">Gaze</span>
+          <span class="metric-value" id="gazeScore">--</span>
+        </div>
+        <div class="metric">
+          <span class="metric-label">Emotion</span>
+          <span class="metric-value" id="emotionScore">--</span>
+        </div>
+        <div class="metric">
+          <span class="metric-label">Mouse</span>
+          <span class="metric-value" id="mouseScore">--</span>
+        </div>
+        <div class="metric">
+          <span class="metric-label">Mood</span>
+          <span class="metric-value" id="dominantEmotion">--</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Controls Section -->
+    <section class="section">
+      <h2 class="section-title">Controls</h2>
+
+      <div class="control-row">
+        <label class="toggle-label" for="enableToggle">Enable Adaptations</label>
+        <label class="toggle">
+          <input type="checkbox" id="enableToggle" checked>
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+
+      <div class="control-row">
+        <label class="slider-label" for="gazeModeSelect">Gaze Mode</label>
+        <select id="gazeModeSelect" class="select">
+          <option value="direct">Direct</option>
+          <option value="monitor_plane">Monitor Plane</option>
+        </select>
+      </div>
+
+      <div class="control-row">
+        <label class="slider-label" for="calibrateCenterBtn">Center Calibrate</label>
+        <button class="btn btn-secondary btn-compact" id="calibrateCenterBtn" type="button">
+          Calibrate
+        </button>
+      </div>
+
+      <div class="control-row">
+        <label class="slider-label" for="sensitivitySlider">Sensitivity</label>
+        <div class="slider-container">
+          <input type="range" id="sensitivitySlider" min="0" max="100" value="50">
+          <span class="slider-value" id="sensitivityValue">50%</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Active Adaptations -->
+    <section class="section" id="adaptationsSection" style="display: none;">
+      <h2 class="section-title">Active Adaptations</h2>
+      <div class="adaptations-list" id="adaptationsList"></div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <button class="btn btn-secondary" id="reconnectBtn" style="display: none;">Reconnect</button>
+      <div class="footer-info">
+        <span class="fps" id="fpsDisplay">-- FPS</span>
+      </div>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,267 @@
+/**
+ * Adaptive UI Extension - Content Script Styles
+ *
+ * CSS for UI adaptations applied to web pages.
+ * Uses CSS custom properties for easy control and reversal.
+ */
+
+/* CSS Custom Properties (set by content.js) */
+:root {
+  --adaptive-font-scale: 1;
+  --adaptive-spacing-scale: 1;
+  --adaptive-highlight-color: #FFD700;
+}
+
+/* ===== GAZE INDICATOR ===== */
+.adaptive-gaze-indicator {
+  position: fixed;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 3px solid rgba(255, 215, 0, 0.8);
+  background: radial-gradient(circle, rgba(255, 215, 0, 0.3) 0%, transparent 70%);
+  pointer-events: none;
+  z-index: 2147483647; /* Maximum z-index */
+  transform: translate(-50%, -50%);
+  transition: left 0.05s linear, top 0.05s linear;
+  box-shadow: 0 0 20px rgba(255, 215, 0, 0.5);
+}
+
+.adaptive-gaze-indicator::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  background: rgba(255, 215, 0, 0.9);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+}
+
+/* ===== SIMPLIFICATION MODE ===== */
+body.adaptive-simplified [role="complementary"],
+body.adaptive-simplified aside:not([role="main"]),
+body.adaptive-simplified .sidebar,
+body.adaptive-simplified .side-bar,
+body.adaptive-simplified [class*="sidebar"] {
+  opacity: 0.3 !important;
+  filter: grayscale(50%) !important;
+  transition: opacity 0.3s ease, filter 0.3s ease !important;
+}
+
+body.adaptive-simplified .advertisement,
+body.adaptive-simplified .ad,
+body.adaptive-simplified [class*="-ad-"],
+body.adaptive-simplified [class*="_ad_"] {
+  opacity: 0.2 !important;
+  filter: grayscale(80%) !important;
+}
+
+body.adaptive-simplified .social-share,
+body.adaptive-simplified .social-buttons,
+body.adaptive-simplified [class*="social"]:not(main):not(article) {
+  opacity: 0.3 !important;
+  filter: grayscale(50%) !important;
+}
+
+/* ===== LAYOUT MODE ===== */
+body.adaptive-layout {
+  /* Increase overall readability */
+  word-spacing: 0.05em;
+}
+
+body.adaptive-layout p,
+body.adaptive-layout li,
+body.adaptive-layout td,
+body.adaptive-layout th {
+  line-height: 1.6 !important;
+}
+
+body.adaptive-layout article,
+body.adaptive-layout section,
+body.adaptive-layout main {
+  max-width: 800px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* ===== GUIDANCE MODE ===== */
+.adaptive-interactive {
+  outline: 2px solid var(--adaptive-highlight-color) !important;
+  outline-offset: 2px;
+  transition: outline-color 0.2s ease, box-shadow 0.2s ease !important;
+}
+
+.adaptive-interactive:hover,
+.adaptive-interactive:focus {
+  outline-width: 3px !important;
+  box-shadow: 0 0 15px var(--adaptive-highlight-color) !important;
+}
+
+/* Focus states for form elements */
+body.adaptive-guidance input:focus,
+body.adaptive-guidance select:focus,
+body.adaptive-guidance textarea:focus {
+  outline: 3px solid var(--adaptive-highlight-color) !important;
+  outline-offset: 2px;
+  box-shadow: 0 0 10px var(--adaptive-highlight-color) !important;
+}
+
+/* Button enhancement */
+body.adaptive-guidance button:not([disabled]),
+body.adaptive-guidance [role="button"]:not([disabled]) {
+  position: relative;
+}
+
+body.adaptive-guidance button:not([disabled])::after,
+body.adaptive-guidance [role="button"]:not([disabled])::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border: 2px dashed var(--adaptive-highlight-color);
+  border-radius: inherit;
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* ===== TOOLTIPS ===== */
+.adaptive-tooltip {
+  position: absolute;
+  background: #333;
+  color: #fff;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  z-index: 2147483646;
+  max-width: 250px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  pointer-events: none;
+  animation: adaptive-tooltip-fade-in 0.2s ease;
+}
+
+.adaptive-tooltip::before {
+  content: '';
+  position: absolute;
+  bottom: -6px;
+  left: 20px;
+  border-width: 6px 6px 0;
+  border-style: solid;
+  border-color: #333 transparent transparent;
+}
+
+@keyframes adaptive-tooltip-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(-5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ===== GENERAL TRANSITIONS ===== */
+body.adaptive-ui-active * {
+  transition-property: font-size, line-height, margin, padding, opacity, filter;
+  transition-duration: 0.3s;
+  transition-timing-function: ease;
+}
+
+/* ===== STATUS INDICATOR (optional) ===== */
+.adaptive-status-indicator {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  padding: 8px 16px;
+  background: rgba(0, 0, 0, 0.8);
+  color: #fff;
+  border-radius: 20px;
+  font-size: 12px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  z-index: 2147483645;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+  animation: adaptive-slide-in 0.3s ease;
+}
+
+.adaptive-status-indicator::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #4CAF50;
+}
+
+.adaptive-status-indicator.disconnected::before {
+  background: #f44336;
+}
+
+.adaptive-status-indicator.high-load::before {
+  background: #ff9800;
+  animation: adaptive-pulse 1s infinite;
+}
+
+@keyframes adaptive-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes adaptive-pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+/* ===== DARK MODE SUPPORT ===== */
+@media (prefers-color-scheme: dark) {
+  .adaptive-tooltip {
+    background: #f5f5f5;
+    color: #333;
+  }
+
+  .adaptive-tooltip::before {
+    border-color: #f5f5f5 transparent transparent;
+  }
+}
+
+/* ===== REDUCED MOTION ===== */
+@media (prefers-reduced-motion: reduce) {
+  .adaptive-gaze-indicator,
+  .adaptive-interactive,
+  body.adaptive-ui-active *,
+  .adaptive-tooltip,
+  .adaptive-status-indicator {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+/* ===== PRINT STYLES ===== */
+@media print {
+  .adaptive-gaze-indicator,
+  .adaptive-tooltip,
+  .adaptive-status-indicator {
+    display: none !important;
+  }
+
+  body.adaptive-simplified *,
+  body.adaptive-layout *,
+  body.adaptive-guidance * {
+    opacity: 1 !important;
+    filter: none !important;
+    outline: none !important;
+  }
+}
