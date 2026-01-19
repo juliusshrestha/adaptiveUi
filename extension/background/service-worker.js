@@ -17,7 +17,8 @@ let reconnectAttempt = 0;
 let reconnectTimeout = null;
 let keepaliveInterval = null;
 let lastAdaptationData = null;
-let adaptationsEnabled = true;
+// Adaptations are disabled (read-only mode).
+let adaptationsEnabled = false;
 
 /**
  * Initialize the service worker
@@ -25,9 +26,11 @@ let adaptationsEnabled = true;
 async function init() {
   console.log('[AdaptiveUI] Service worker initializing...');
 
-  // Load settings from storage
-  const settings = await chrome.storage.local.get(['serverUrl', 'adaptationsEnabled']);
-  adaptationsEnabled = settings.adaptationsEnabled !== false; // Default true
+  // Load settings from storage (serverUrl only)
+  const settings = await chrome.storage.local.get(['serverUrl']);
+
+  // Ensure any previously applied adaptations are reverted on startup
+  broadcastToContentScripts({ type: 'revert_adaptations' });
 
   // Connect to server
   connect(settings.serverUrl || DEFAULT_SERVER_URL);
@@ -74,6 +77,9 @@ function handleOpen() {
 
   // Notify all tabs
   broadcastToContentScripts({ type: 'connection_status', connected: true });
+
+  // Read-only mode: ensure adaptations are reverted even while connected
+  broadcastToContentScripts({ type: 'revert_adaptations' });
 
   // Start keepalive
   startKeepalive();
@@ -131,16 +137,8 @@ function handleAdaptationUpdate(message) {
     lastUpdateTime: Date.now()
   });
 
-  // Only forward if adaptations are enabled
-  if (adaptationsEnabled) {
-    broadcastToContentScripts({
-      type: 'apply_adaptations',
-      adaptations: message.data.adaptation_commands,
-      cognitiveLoad: message.data.cognitive_load,
-      gazeCoords: message.data.gaze_coords,
-      emotion: message.data.emotion
-    });
-  }
+  // Adaptations disabled: never apply. Also ensure any prior changes are reverted.
+  broadcastToContentScripts({ type: 'revert_adaptations' });
 }
 
 /**
@@ -271,20 +269,8 @@ function setupMessageListeners() {
         sendResponse({
           connected: isConnected,
           lastAdaptation: lastAdaptationData,
-          adaptationsEnabled
+          adaptationsEnabled: false
         });
-        break;
-
-      case 'toggle_adaptations':
-        adaptationsEnabled = message.enabled;
-        chrome.storage.local.set({ adaptationsEnabled });
-
-        // If disabling, tell content scripts to revert
-        if (!adaptationsEnabled) {
-          broadcastToContentScripts({ type: 'revert_adaptations' });
-        }
-
-        sendResponse({ success: true, enabled: adaptationsEnabled });
         break;
 
       case 'send_command':

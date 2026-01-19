@@ -14,14 +14,7 @@ const gazeScore = document.getElementById('gazeScore');
 const emotionScore = document.getElementById('emotionScore');
 const mouseScore = document.getElementById('mouseScore');
 const dominantEmotion = document.getElementById('dominantEmotion');
-const enableToggle = document.getElementById('enableToggle');
 const processingToggleBtn = document.getElementById('processingToggleBtn');
-const gazeModeSelect = document.getElementById('gazeModeSelect');
-const calibrateCenterBtn = document.getElementById('calibrateCenterBtn');
-const sensitivitySlider = document.getElementById('sensitivitySlider');
-const sensitivityValue = document.getElementById('sensitivityValue');
-const adaptationsSection = document.getElementById('adaptationsSection');
-const adaptationsList = document.getElementById('adaptationsList');
 const reconnectBtn = document.getElementById('reconnectBtn');
 const fpsDisplay = document.getElementById('fpsDisplay');
 
@@ -34,14 +27,6 @@ let lastStatusRequestAt = 0;
  * Initialize popup
  */
 async function init() {
-  // Load saved settings
-  const settings = await chrome.storage.local.get(['adaptationsEnabled', 'sensitivity', 'gazeMode']);
-  enableToggle.checked = settings.adaptationsEnabled !== false;
-  sensitivitySlider.value = settings.sensitivity || 50;
-  sensitivityValue.textContent = `${sensitivitySlider.value}%`;
-  gazeModeSelect.value = settings.gazeMode || 'direct';
-  updateCalibrateButtonState();
-
   // Setup event listeners
   setupEventListeners();
 
@@ -56,26 +41,6 @@ async function init() {
  * Setup event listeners
  */
 function setupEventListeners() {
-  // Enable toggle
-  enableToggle.addEventListener('change', async () => {
-    const enabled = enableToggle.checked;
-    chrome.runtime.sendMessage({ type: 'toggle_adaptations', enabled });
-    chrome.storage.local.set({ adaptationsEnabled: enabled });
-  });
-
-  // Gaze mode selector
-  gazeModeSelect.addEventListener('change', async () => {
-    const mode = gazeModeSelect.value;
-    chrome.runtime.sendMessage({ type: 'send_config', config: { gaze_mode: mode } });
-    chrome.storage.local.set({ gazeMode: mode });
-    updateCalibrateButtonState();
-  });
-
-  // Center calibration (only meaningful in monitor_plane mode)
-  calibrateCenterBtn.addEventListener('click', async () => {
-    chrome.runtime.sendMessage({ type: 'send_command', command: 'calibrate_center' });
-  });
-
   // Start/stop processing (this starts/stops the backend "main.py" pipeline only)
   processingToggleBtn.addEventListener('click', async () => {
     if (!isConnected) {
@@ -95,32 +60,12 @@ function setupEventListeners() {
     setTimeout(() => chrome.runtime.sendMessage({ type: 'send_command', command: 'status' }), 250);
   });
 
-  // Sensitivity slider
-  sensitivitySlider.addEventListener('input', () => {
-    sensitivityValue.textContent = `${sensitivitySlider.value}%`;
-  });
-
-  sensitivitySlider.addEventListener('change', async () => {
-    const sensitivity = sensitivitySlider.value / 100;
-    chrome.runtime.sendMessage({ type: 'send_config', config: { sensitivity } });
-    chrome.storage.local.set({ sensitivity: sensitivitySlider.value });
-  });
-
   // Reconnect button
   reconnectBtn.addEventListener('click', () => {
     chrome.runtime.sendMessage({ type: 'reconnect' });
     statusText.textContent = 'Reconnecting...';
     reconnectBtn.style.display = 'none';
   });
-}
-
-function updateCalibrateButtonState() {
-  const mode = gazeModeSelect.value;
-  // Only enable for monitor_plane mode (backend supports calibrate_center there)
-  calibrateCenterBtn.disabled = mode !== 'monitor_plane';
-  calibrateCenterBtn.title = mode === 'monitor_plane'
-    ? 'Look at the center of your screen, then click to calibrate.'
-    : 'Switch to Monitor Plane mode to use center calibration.';
 }
 
 /**
@@ -134,7 +79,6 @@ async function updateStatus() {
     if (response) {
       updateConnectionStatus(response.connected);
       updateAdaptationData(response.lastAdaptation);
-      enableToggle.checked = response.adaptationsEnabled;
     }
 
     // Get server status from storage
@@ -210,7 +154,6 @@ function updateAdaptationData(data) {
 
   const cognitiveLoad = data.cognitive_load || {};
   const emotion = data.emotion || {};
-  const adaptations = data.adaptations || [];
 
   // Update cognitive load display
   const score = cognitiveLoad.score || 0;
@@ -230,37 +173,6 @@ function updateAdaptationData(data) {
   emotionScore.textContent = formatScore(cognitiveLoad.emotion_score);
   mouseScore.textContent = formatScore(cognitiveLoad.mouse_score);
   dominantEmotion.textContent = capitalizeFirst(emotion.dominant || 'unknown');
-
-  // Update adaptations list
-  updateAdaptationsList(adaptations, data.adaptation_commands);
-}
-
-/**
- * Update adaptations list display
- */
-function updateAdaptationsList(adaptations, commands) {
-  if (!adaptations || adaptations.length === 0) {
-    adaptationsSection.style.display = 'none';
-    return;
-  }
-
-  adaptationsSection.style.display = 'block';
-
-  // Map adaptation names to friendly labels
-  const labels = {
-    'simplification': 'Simplifying UI',
-    'hide_decorative': 'Hiding decorative elements',
-    'guidance': 'Showing guidance',
-    'highlight_next_step': 'Highlighting next step',
-    'show_tooltips': 'Showing tooltips',
-    'layout_reorganization': 'Reorganizing layout',
-    'whitespace_increase': 'Increasing whitespace',
-    'font_size_increase': 'Increasing font size'
-  };
-
-  adaptationsList.innerHTML = adaptations
-    .map(a => `<span class="adaptation-tag">${labels[a] || a}</span>`)
-    .join('');
 }
 
 /**
