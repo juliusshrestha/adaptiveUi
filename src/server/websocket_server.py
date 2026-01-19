@@ -133,7 +133,10 @@ class AdaptiveUIServer:
         self.adaptive_system: Optional[AdaptiveUISystem] = None
         self.processing_thread: Optional[threading.Thread] = None
         self.result_queue: Queue = Queue(maxsize=1)  # Only keep latest result
+        # `running` controls server lifetime (broadcast loop / shutdown)
         self.running = False
+        # `processing_active` controls whether camera processing runs
+        self.processing_active = False
         self.paused = False
 
         # Stats
@@ -153,6 +156,41 @@ class AdaptiveUIServer:
         # Graceful shutdown coordination (set inside start())
         self._shutdown_event: Optional[asyncio.Event] = None
 
+        # Lazy-start coordination (set inside start())
+        self._startup_lock: Optional[asyncio.Lock] = None
+
+        # Pending configuration to apply when processing starts
+        self._pending_config: Dict[str, Any] = {}
+
+    def _stop_processing_sync(self):
+        """
+        Stop only the processing pipeline (camera + AdaptiveUISystem),
+        but keep the WebSocket server running.
+        """
+        self.processing_active = False
+        self.paused = False
+
+        # Wait for processing thread to exit
+        if self.processing_thread and self.processing_thread.is_alive():
+            self.processing_thread.join(timeout=2.0)
+
+        self.processing_thread = None
+
+        # Cleanup AdaptiveUISystem resources (camera, mouse tracker, etc.)
+        if self.adaptive_system is not None:
+            try:
+                self.adaptive_system.cleanup()
+            except Exception as e:
+                self.logger.debug(f"Error during adaptive system cleanup: {e}")
+
+        self.adaptive_system = None
+        with self._last_frame_lock:
+            self._last_frame = None
+
+        # Clear cached outputs so clients can detect "no data yet"
+        self._last_adaptation_message = None
+        self._last_cognitive_load_payload = None
+
     def _init_adaptive_system(self):
         """Initialize the AdaptiveUISystem."""
         self.logger.info("Initializing AdaptiveUISystem...")
@@ -167,12 +205,13 @@ class AdaptiveUIServer:
         """
         self.logger.info("Starting frame processing thread...")
 
+        # adaptive_system is created by `_ensure_processing_started()`
         camera = self.adaptive_system.camera
         target_fps = self.adaptive_system.target_fps
         target_interval = 1.0 / target_fps
         last_frame_time = 0
 
-        while self.running:
+        while self.running and self.processing_active:
             # Pause handling
             if self.paused:
                 time.sleep(0.1)
@@ -229,6 +268,72 @@ class AdaptiveUIServer:
                 self.logger.error(f"Error processing frame: {e}", exc_info=True)
 
         self.logger.info("Frame processing thread stopped")
+
+    async def _ensure_processing_started(self) -> bool:
+        """
+        Lazy-start the full AdaptiveUISystem + camera processing.
+
+        Requirement from product behavior:
+        - Do NOT run the full `src/main.py` pipeline until a websocket message arrives.
+        - Start on-demand when a client asks for status/data/subscribe/etc.
+        """
+        if self.processing_active and self.adaptive_system is not None and self.processing_thread and self.processing_thread.is_alive():
+            return True
+
+        if self._startup_lock is None:
+            self._startup_lock = asyncio.Lock()
+
+        async with self._startup_lock:
+            if self.processing_active and self.adaptive_system is not None and self.processing_thread and self.processing_thread.is_alive():
+                return True
+
+            # Initialize AdaptiveUISystem (opens camera, starts trackers)
+            if self.adaptive_system is None:
+                await asyncio.to_thread(self._init_adaptive_system)
+
+            # Apply any config that arrived before the pipeline started
+            if self._pending_config and self.adaptive_system is not None:
+                try:
+                    await asyncio.to_thread(self._apply_pending_config_sync)
+                except Exception as e:
+                    self.logger.debug(f"Failed applying pending config: {e}")
+
+            # Start processing thread
+            self.processing_active = True
+            if self.processing_thread is None or not self.processing_thread.is_alive():
+                self.processing_thread = threading.Thread(target=self._process_frames, daemon=True)
+                self.processing_thread.start()
+
+            return True
+
+    def _apply_pending_config_sync(self):
+        """Apply pending config to the running AdaptiveUISystem (sync)."""
+        if self.adaptive_system is None:
+            return
+
+        cfg = dict(self._pending_config)
+
+        # Sensitivity (maps to overload threshold)
+        sensitivity = cfg.get("sensitivity")
+        if sensitivity is not None and self.adaptive_system.cognitive_load_monitor:
+            try:
+                sensitivity = float(sensitivity)
+                threshold = 0.8 - (sensitivity * 0.3)
+                self.adaptive_system.cognitive_load_monitor.cli_overload_threshold = threshold
+            except Exception:
+                pass
+
+        # Gaze mode switching
+        gaze_mode = cfg.get("gaze_mode") or cfg.get("gazeMode")
+        if gaze_mode:
+            mp_cfg = cfg.get("monitor_plane") or {}
+            try:
+                self.adaptive_system.set_gaze_mode(str(gaze_mode), monitor_plane_config=mp_cfg)
+            except Exception:
+                pass
+
+        # Clear after applying
+        self._pending_config.clear()
 
     def _create_adaptation_message(self, result: dict) -> AdaptationMessage:
         """
@@ -305,6 +410,7 @@ class AdaptiveUIServer:
             data={
                 'connected': True,
                 'camera_active': self.adaptive_system is not None and self.adaptive_system.camera is not None,
+                'processing_active': self.processing_active,
                 'fps': round(self.fps, 1),
                 'frames_processed': self.frames_processed,
                 'clients_connected': len(self.clients),
@@ -414,6 +520,14 @@ class AdaptiveUIServer:
                 'message': 'Calibration not supported in server mode'
             }))
         elif command == 'calibrate_center':
+            if not self.processing_active:
+                await websocket.send(json.dumps({
+                    'type': 'command_response',
+                    'command': command,
+                    'success': False,
+                    'message': 'Processing is not running. Start processing first.'
+                }))
+                return
             # Center calibration for monitor-plane tracker
             success = False
             message = 'Not ready'
@@ -446,6 +560,14 @@ class AdaptiveUIServer:
                 'success': True
             }))
         elif command == 'resume':
+            if not self.processing_active:
+                await websocket.send(json.dumps({
+                    'type': 'command_response',
+                    'command': command,
+                    'success': False,
+                    'message': 'Processing is not running. Start processing first.'
+                }))
+                return
             self.paused = False
             await websocket.send(json.dumps({
                 'type': 'command_response',
@@ -455,6 +577,23 @@ class AdaptiveUIServer:
         elif command == 'status':
             status = self._create_status_message()
             await websocket.send(status.to_json())
+        elif command in ('start_processing', 'start_main', 'start_tracking'):
+            ok = await self._ensure_processing_started()
+            await websocket.send(json.dumps({
+                'type': 'command_response',
+                'command': command,
+                'success': bool(ok),
+                'message': 'Processing started' if ok else 'Failed to start processing'
+            }))
+        elif command in ('stop_processing', 'stop_main', 'stop_tracking'):
+            # Stop ONLY the processing pipeline (camera/main loop), keep WebSocket server alive.
+            await asyncio.to_thread(self._stop_processing_sync)
+            await websocket.send(json.dumps({
+                'type': 'command_response',
+                'command': command,
+                'success': True,
+                'message': 'Processing stopped (server still running)'
+            }))
         elif command in ('shutdown', 'stop_server'):
             # Gracefully stop the server (useful for extension "Stop Server" button).
             await websocket.send(json.dumps({
@@ -473,9 +612,12 @@ class AdaptiveUIServer:
     async def _handle_config(self, websocket: WebSocketServerProtocol, config: dict):
         """Handle configuration update from a client."""
         self.logger.info(f"Received config update: {config}")
+        # Store config for later if processing is not running yet.
+        # This supports the UX: set gaze mode/sensitivity before pressing Start.
+        self._pending_config.update(config or {})
 
         # Apply config changes to the cognitive load monitor
-        if self.adaptive_system and self.adaptive_system.cognitive_load_monitor:
+        if self.adaptive_system and self.processing_active and self.adaptive_system.cognitive_load_monitor:
             monitor = self.adaptive_system.cognitive_load_monitor
 
             if 'sensitivity' in config:
@@ -487,7 +629,7 @@ class AdaptiveUIServer:
 
         # Allow switching gaze tracker mode at runtime (extension feature)
         gaze_mode = config.get('gaze_mode') or config.get('gazeMode')
-        if gaze_mode and self.adaptive_system:
+        if gaze_mode and self.adaptive_system and self.processing_active:
             # Pause frame processing during swap
             was_paused = self.paused
             self.paused = True
@@ -564,14 +706,10 @@ class AdaptiveUIServer:
 
         # Event used to exit the "run forever" loop gracefully
         self._shutdown_event = asyncio.Event()
+        self._startup_lock = asyncio.Lock()
 
-        # Initialize the adaptive system
-        self._init_adaptive_system()
-
-        # Start frame processing thread
+        # Start server lifecycle (but DO NOT start AdaptiveUISystem yet)
         self.running = True
-        self.processing_thread = threading.Thread(target=self._process_frames, daemon=True)
-        self.processing_thread.start()
 
         # Start WebSocket server
         self.server = await websockets.serve(
@@ -604,10 +742,10 @@ class AdaptiveUIServer:
             self._shutdown_event.set()
 
         self.running = False
+        self.processing_active = False
 
-        # Wait for processing thread
-        if self.processing_thread and self.processing_thread.is_alive():
-            self.processing_thread.join(timeout=2.0)
+        # Stop processing pipeline if it was active
+        await asyncio.to_thread(self._stop_processing_sync)
 
         # Close all client connections
         if self.clients:
@@ -618,10 +756,6 @@ class AdaptiveUIServer:
         if self.server:
             self.server.close()
             await self.server.wait_closed()
-
-        # Cleanup adaptive system
-        if self.adaptive_system:
-            self.adaptive_system.cleanup()
 
         self.logger.info("Server stopped")
 

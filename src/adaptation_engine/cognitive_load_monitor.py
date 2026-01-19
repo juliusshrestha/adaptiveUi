@@ -52,6 +52,9 @@ class CognitiveLoadMonitor:
         weight_gaze: float = 0.5,
         weight_emotion: float = 0.3,
         weight_mouse: float = 0.2,
+        # Windowing / update behavior
+        window_duration_sec: float = 5.0,
+        update_interval_sec: float = 5.0,
         # Overload threshold
         cli_overload_threshold: float = 0.65
     ):
@@ -86,6 +89,8 @@ class CognitiveLoadMonitor:
             weight_gaze=weight_gaze,
             weight_emotion=weight_emotion,
             weight_mouse=weight_mouse,
+            window_duration=window_duration_sec,
+            update_interval=update_interval_sec,
             history_window=gaze_history_window
         )
         

@@ -97,8 +97,8 @@ class CognitiveLoadCalculator:
         weight_gaze: float = 0.5,
         weight_emotion: float = 0.3,
         weight_mouse: float = 0.2,
-        window_duration: float = 5.0,    # Window size in seconds
-        update_interval: float = 5.0,    # Update CLI every N seconds
+        window_duration: float = 5.0,    # Window size in seconds (<=0 => use ALL history)
+        update_interval: float = 5.0,    # Update CLI every N seconds (<=0 => every call)
         history_window: int = 30,         # DEPRECATED: kept for backward compatibility
         baseline_frames: int = 60         # DEPRECATED: kept for backward compatibility
     ):
@@ -121,8 +121,18 @@ class CognitiveLoadCalculator:
         self.weight_mouse = weight_mouse / total_weight
         
         # Window configuration
-        self.window_duration = timedelta(seconds=window_duration)
-        self.update_interval = timedelta(seconds=update_interval)
+        # If window_duration <= 0: treat as "use all history" (no time cutoff)
+        self.window_duration: Optional[timedelta]
+        if window_duration is None or window_duration <= 0:
+            self.window_duration = None
+        else:
+            self.window_duration = timedelta(seconds=window_duration)
+
+        # If update_interval <= 0: calculate on every call (no throttling)
+        if update_interval is None or update_interval <= 0:
+            self.update_interval = timedelta(seconds=0)
+        else:
+            self.update_interval = timedelta(seconds=update_interval)
         
         # Time-stamped data storage (timestamp, data)
         self.gaze_data: deque = deque()      # (timestamp, x, y, pupil_size)
@@ -154,7 +164,10 @@ class CognitiveLoadCalculator:
         self._last_cli_result: Optional[Dict[str, Any]] = None
     
     def _cleanup_old_data(self, current_time: datetime):
-        """Remove data older than the window duration."""
+        """Remove data older than the window duration (if windowing is enabled)."""
+        if self.window_duration is None:
+            return
+
         cutoff = current_time - self.window_duration
         
         while self.gaze_data and self.gaze_data[0][0] < cutoff:
@@ -245,15 +258,36 @@ class CognitiveLoadCalculator:
             return True
         
         return (current_time - self.last_cli_update) >= self.update_interval
+
+    def _get_windowed(self, data: deque, current_time: datetime):
+        """Return data filtered to the active time window (or all data if window disabled)."""
+        if self.window_duration is None:
+            return list(data)
+        cutoff = current_time - self.window_duration
+        return [row for row in data if row[0] >= cutoff]
+
+    def _effective_window_seconds(self, positions: List[Tuple]) -> float:
+        """
+        Effective time span represented by the data.
+        - If time window is enabled: use configured window seconds
+        - If disabled: use (last_ts - first_ts)
+        """
+        if self.window_duration is not None:
+            return max(0.001, self.window_duration.total_seconds())
+        if len(positions) >= 2:
+            return max(0.001, (positions[-1][0] - positions[0][0]).total_seconds())
+        return 0.001
     
-    def _calculate_gaze_metrics(self) -> GazeMetrics:
+    def _calculate_gaze_metrics(self, current_time: datetime) -> GazeMetrics:
         """Calculate gaze metrics from windowed data."""
         metrics = GazeMetrics()
         
         if not self.gaze_data:
             return metrics
         
-        positions = list(self.gaze_data)
+        positions = self._get_windowed(self.gaze_data, current_time)
+        if not positions:
+            return metrics
         
         # Gaze dispersion
         if len(positions) >= 2:
@@ -292,7 +326,7 @@ class CognitiveLoadCalculator:
             metrics.fixation_duration = np.mean(fixation_durations)
         
         # Saccade frequency
-        window_sec = self.window_duration.total_seconds()
+        window_sec = self._effective_window_seconds(positions)
         metrics.saccade_frequency = saccade_count / window_sec if window_sec > 0 else 0
         
         # Pupil dilation
@@ -309,7 +343,7 @@ class CognitiveLoadCalculator:
         
         return metrics
     
-    def _calculate_emotion_metrics(self) -> EmotionMetrics:
+    def _calculate_emotion_metrics(self, current_time: datetime) -> EmotionMetrics:
         """Calculate emotion metrics from windowed data."""
         metrics = EmotionMetrics()
         
@@ -317,7 +351,9 @@ class CognitiveLoadCalculator:
             return metrics
         
         # Average recent emotion data
-        emotions_list = list(self.emotion_data)
+        emotions_list = self._get_windowed(self.emotion_data, current_time)
+        if not emotions_list:
+            return metrics
         
         negative_affects = []
         valences = []
@@ -364,19 +400,24 @@ class CognitiveLoadCalculator:
         
         return metrics
     
-    def _calculate_mouse_metrics(self) -> MouseMetrics:
+    def _calculate_mouse_metrics(self, current_time: datetime) -> MouseMetrics:
         """Calculate mouse metrics from windowed data."""
         metrics = MouseMetrics()
         
         if not self.mouse_data:
             return metrics
         
-        positions = list(self.mouse_data)
-        window_sec = self.window_duration.total_seconds()
+        positions = self._get_windowed(self.mouse_data, current_time)
+        if not positions:
+            return metrics
+
+        # Clicks should use the same window definition
+        click_positions = self._get_windowed(self.click_data, current_time)
+        window_sec = self._effective_window_seconds(positions)
         
         # Click rates
-        total_clicks = len(self.click_data)
-        error_clicks = sum(1 for _, is_err in self.click_data if is_err)
+        total_clicks = len(click_positions)
+        error_clicks = sum(1 for _, is_err in click_positions if is_err)
         
         metrics.click_rate = total_clicks / window_sec if window_sec > 0 else 0
         metrics.error_click_rate = error_clicks / window_sec if window_sec > 0 else 0
@@ -460,10 +501,10 @@ class CognitiveLoadCalculator:
         if not force_update and not self.should_calculate_cli(current_time):
             return self._last_cli_result
         
-        # Calculate metrics from windowed data
-        gaze_metrics = self._calculate_gaze_metrics()
-        emotion_metrics = self._calculate_emotion_metrics()
-        mouse_metrics = self._calculate_mouse_metrics()
+        # Calculate metrics from windowed data (or full history if window disabled)
+        gaze_metrics = self._calculate_gaze_metrics(current_time)
+        emotion_metrics = self._calculate_emotion_metrics(current_time)
+        mouse_metrics = self._calculate_mouse_metrics(current_time)
         
         # Get raw scores
         gaze_raw = gaze_metrics.get_load_score()
@@ -530,7 +571,7 @@ class CognitiveLoadCalculator:
             'mouse_raw': mouse_raw,
             'load_level': load_level,
             'timestamp': current_time,
-            'window_duration': self.window_duration.total_seconds(),
+            'window_duration': self.window_duration.total_seconds() if self.window_duration is not None else None,
             'weights': {
                 'gaze': self.weight_gaze,
                 'emotion': self.weight_emotion,

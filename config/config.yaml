@@ -46,6 +46,14 @@ cognitive_load:
   negative_affect_threshold: 0.5
   gaze_history_window: 30
   overload_threshold: 0.6
+
+  # Windowing / update behavior:
+  # - window_duration_sec > 0: compute metrics over the last N seconds
+  # - window_duration_sec <= 0: compute metrics over ALL collected samples (keeps every data point)
+  # - update_interval_sec > 0: compute CLI every N seconds
+  # - update_interval_sec <= 0: compute CLI on EVERY call (per data point / per frame)
+  window_duration_sec: 10.0
+  update_interval_sec: 0.0
   
   # CLI Weights (for research: use equal weights to avoid bias)
   # Set weights based on research question:

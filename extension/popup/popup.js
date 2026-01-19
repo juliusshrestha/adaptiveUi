@@ -15,6 +15,7 @@ const emotionScore = document.getElementById('emotionScore');
 const mouseScore = document.getElementById('mouseScore');
 const dominantEmotion = document.getElementById('dominantEmotion');
 const enableToggle = document.getElementById('enableToggle');
+const processingToggleBtn = document.getElementById('processingToggleBtn');
 const gazeModeSelect = document.getElementById('gazeModeSelect');
 const calibrateCenterBtn = document.getElementById('calibrateCenterBtn');
 const sensitivitySlider = document.getElementById('sensitivitySlider');
@@ -23,13 +24,11 @@ const adaptationsSection = document.getElementById('adaptationsSection');
 const adaptationsList = document.getElementById('adaptationsList');
 const reconnectBtn = document.getElementById('reconnectBtn');
 const fpsDisplay = document.getElementById('fpsDisplay');
-const toggleTrackingBtn = document.getElementById('toggleTrackingBtn');
-const startServerBtn = document.getElementById('startServerBtn');
-const stopServerBtn = document.getElementById('stopServerBtn');
 
 // State
 let isConnected = false;
 let updateInterval = null;
+let lastStatusRequestAt = 0;
 
 /**
  * Initialize popup
@@ -77,39 +76,23 @@ function setupEventListeners() {
     chrome.runtime.sendMessage({ type: 'send_command', command: 'calibrate_center' });
   });
 
-  // Start/stop tracking (pause/resume processing loop on backend)
-  toggleTrackingBtn.addEventListener('click', async () => {
-    if (!isConnected) {
-      statusText.textContent = 'Disconnected (start server first)';
-      return;
-    }
-    const storage = await chrome.storage.local.get(['serverStatus']);
-    const paused = !!(storage.serverStatus && storage.serverStatus.paused);
-    chrome.runtime.sendMessage({ type: 'send_command', command: paused ? 'resume' : 'pause' });
-    // Ask for status refresh shortly after.
-    setTimeout(() => chrome.runtime.sendMessage({ type: 'send_command', command: 'status' }), 250);
-  });
-
-  // Start server: extensions cannot launch local processes directly, so we copy the command.
-  startServerBtn.addEventListener('click', async () => {
-    const cmd = 'python -m src.server.run_server';
-    try {
-      await navigator.clipboard.writeText(cmd);
-      statusText.textContent = 'Start command copied (run in terminal)';
-    } catch (e) {
-      statusText.textContent = 'Run in terminal: python -m src.server.run_server';
-    }
-    chrome.runtime.sendMessage({ type: 'reconnect' });
-  });
-
-  // Stop server: graceful shutdown via WebSocket command.
-  stopServerBtn.addEventListener('click', async () => {
+  // Start/stop processing (this starts/stops the backend "main.py" pipeline only)
+  processingToggleBtn.addEventListener('click', async () => {
     if (!isConnected) {
       statusText.textContent = 'Disconnected';
       return;
     }
-    chrome.runtime.sendMessage({ type: 'send_command', command: 'shutdown' });
-    statusText.textContent = 'Stopping server...';
+
+    const storage = await chrome.storage.local.get(['serverStatus']);
+    const active = !!(storage.serverStatus && storage.serverStatus.processing_active);
+
+    chrome.runtime.sendMessage({
+      type: 'send_command',
+      command: active ? 'stop_processing' : 'start_processing'
+    });
+
+    // Refresh status shortly after
+    setTimeout(() => chrome.runtime.sendMessage({ type: 'send_command', command: 'status' }), 250);
   });
 
   // Sensitivity slider
@@ -162,26 +145,35 @@ async function updateStatus() {
     }
     updateBackendControls(storage.serverStatus);
 
+    // Keep status fresh so the toggle reflects real state (does NOT start processing).
+    if (isConnected && Date.now() - lastStatusRequestAt > 1000) {
+      lastStatusRequestAt = Date.now();
+      chrome.runtime.sendMessage({ type: 'send_command', command: 'status' });
+    }
+
   } catch (error) {
     console.error('Error getting status:', error);
   }
 }
 
 function updateBackendControls(serverStatus) {
-  // Tracking button label
   if (!isConnected) {
-    toggleTrackingBtn.textContent = '--';
-    toggleTrackingBtn.disabled = true;
-    stopServerBtn.disabled = true;
+    processingToggleBtn.textContent = '--';
+    processingToggleBtn.disabled = true;
     return;
   }
 
-  toggleTrackingBtn.disabled = false;
-  stopServerBtn.disabled = false;
+  if (!serverStatus) {
+    processingToggleBtn.textContent = '--';
+    processingToggleBtn.disabled = true;
+    return;
+  }
 
-  const paused = !!(serverStatus && serverStatus.paused);
-  toggleTrackingBtn.textContent = paused ? 'Start' : 'Stop';
-  toggleTrackingBtn.title = paused ? 'Resume processing' : 'Pause processing';
+  processingToggleBtn.disabled = false;
+
+  const active = !!serverStatus.processing_active;
+  processingToggleBtn.textContent = active ? 'Stop' : 'Start';
+  processingToggleBtn.title = active ? 'Stop processing (keep server running)' : 'Start processing';
 }
 
 /**

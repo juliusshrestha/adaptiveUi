@@ -124,7 +124,9 @@ class AdaptiveUISystem:
             gaze_wander_threshold=cognitive_load_config.get('gaze_wander_threshold', 0.3),
             fixation_duration_threshold=cognitive_load_config.get('fixation_duration_threshold', 3.0),
             negative_affect_threshold=cognitive_load_config.get('negative_affect_threshold', 0.5),
-            gaze_history_window=cognitive_load_config.get('gaze_history_window', 30)
+            gaze_history_window=cognitive_load_config.get('gaze_history_window', 30),
+            window_duration_sec=float(cognitive_load_config.get('window_duration_sec', 5.0)),
+            update_interval_sec=float(cognitive_load_config.get('update_interval_sec', 5.0)),
         )
 
         self.ui_adapter = UIAdapter()
